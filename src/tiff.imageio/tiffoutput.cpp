@@ -55,6 +55,10 @@
 
 #include <boost/scoped_array.hpp>
 
+#include <string>
+#include <sstream>
+#include <boost/regex.hpp>
+
 
 OIIO_PLUGIN_NAMESPACE_BEGIN
 
@@ -250,6 +254,51 @@ TIFFOutput::supports (string_view feature) const
 
 #define ICC_PROFILE_ATTR "ICCProfile"
 
+
+/*
+ * This function attempts to convert a date & time string in
+ * various formats to whats's supported by the TIFF tags
+ */
+std::string convertDateTimeToTIFF(const std::string dateTime) {
+  const static std::string dig2 = "(\\d{2})";
+  const static std::string dig4 = "(\\d{4})";
+  const static std::string otz = "(\\D.*)?";
+  const static std::string osep = "\\D?";
+  const static boost::regex yyyy(dig4);
+  const static boost::regex yyyymm(dig4 + osep + dig2);
+  const static boost::regex yyyymmdd(dig4 + osep + dig2 + osep + dig2);
+  const static boost::regex yyyymmddhhmm(dig4 + osep + dig2 + osep + dig2 + osep + dig2 + osep + dig2 + otz);
+  const static boost::regex yyyymmddhhmmss(dig4 + osep + dig2 + osep + dig2 + osep + dig2 + osep + dig2 + osep + dig2 + "(\\.\\d+)?" + otz);
+  
+  std::ostringstream output;
+  boost::match_results<std::string::const_iterator> match;
+
+  if (boost::regex_match(dateTime, match, yyyy)) {
+    output << match[1] << "-01-01 00:00:00";
+    return output.str();
+  }
+
+  if (boost::regex_match(dateTime, match, yyyymm)) {
+    output << match[1] << "-" << match[2] << "-01 00:00:00";
+    return output.str();
+  }
+
+  if (boost::regex_match(dateTime, match, yyyymmdd)) {
+    output << match[1] << "-" << match[2] << "-" << match[3] << " 00:00:00";
+    return output.str();
+  }
+
+  if (boost::regex_match(dateTime, match, yyyymmddhhmm)) {
+    output << match[1] << "-" << match[2] << "-" << match[3] << " " << match[4] << ":" << match[5] << ":00";
+    return output.str();
+  }
+
+  if (boost::regex_match(dateTime, match, yyyymmddhhmmss)) {
+    output << match[1] << "-" << match[2] << "-" << match[3] << " " << match[4] << ":" << match[5] << ":" << match[6];
+    return output.str();
+  }
+  return "";
+}
 
 bool
 TIFFOutput::open (const std::string &name, const ImageSpec &userspec,
@@ -497,6 +546,14 @@ TIFFOutput::open (const std::string &name, const ImageSpec &userspec,
                                mytm.tm_year+1900, mytm.tm_mon+1, mytm.tm_mday,
                                mytm.tm_hour, mytm.tm_min, mytm.tm_sec);
         m_spec.attribute ("DateTime", date);
+    } else {
+      // make sure that our DateTime field is in a good format for TIFF
+      std::string new_dateTime = convertDateTimeToTIFF(m_spec.get_string_attribute("DateTime"));
+      if (new_dateTime.length()) {
+	m_spec.attribute ("DateTime", new_dateTime);
+      } else {
+	m_spec.erase_attribute("DateTime");
+      }
     }
 
     // Write ICC profile, if we have anything
